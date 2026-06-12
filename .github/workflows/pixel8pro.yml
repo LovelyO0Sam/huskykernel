@@ -1,0 +1,150 @@
+name: Pixel 8 Pro (husky) Kernel Builder
+
+on:
+  workflow_dispatch:
+    inputs:
+      # ==================== 内核版本配置 ====================
+      # Pixel 8 Pro (husky) uses Tensor G3 with GKI kernel android14-6.1.
+      # This is the GKI branch name — NOT your phone's Android platform version.
+      # The same android14-6.1 kernel works on Android 14, 15, and 16.
+      android_version:
+        description: "GKI Branch (Pixel 8 Pro only supports android14-6.1)"
+        required: true
+        type: choice
+        options:
+          - android14
+        default: android14
+      kernel_version:
+        description: "Kernel Version (Pixel 8 Pro only supports 6.1)"
+        required: true
+        type: choice
+        options:
+          - "6.1"
+        default: "6.1"
+      sub_level:
+        description: "Sub Level (e.g. 129, 162, X for lts)"
+        required: true
+        type: string
+        default: "X"
+      os_patch_level:
+        description: "Security Patch Level (e.g. 2025-05, 2026-03, lts)"
+        required: true
+        type: string
+        default: "lts"
+
+      # ==================== 功能开关 ====================
+      enable_susfs:
+        description: "Enable SUSFS"
+        required: true
+        type: boolean
+        default: true
+      use_zram:
+        description: "Enable ZRAM Enhanced Algorithms"
+        required: true
+        type: boolean
+        default: true
+      zram_full_algo:
+        description: "Enable ZRAM Full Algorithm Support (lzo/lz4/lz4hc/lz4k/lz4kd/deflate/842/zstd, default lzo-rle)"
+        required: false
+        type: boolean
+        default: false
+      zram_extra_algos:
+        description: "Custom ZRAM Algorithms (comma-separated, e.g. lzo,lz4,deflate,zstd; only when full algo is off)"
+        required: false
+        type: string
+        default: ""
+      use_bbg:
+        description: "Enable BBG Anti-Brick"
+        required: true
+        type: boolean
+        default: true
+      use_ddk:
+        description: "Enable DDK LSM"
+        required: true
+        type: boolean
+        default: false
+      use_ntsync:
+        description: "Enable NTsync"
+        required: true
+        type: boolean
+        default: true
+      use_networking:
+        description: "Enable Networking Enhancement (IPSet + BBR)"
+        required: true
+        type: boolean
+        default: true
+      use_kpm:
+        description: "Enable KPM — NOT supported with Official KernelSU, keep disabled"
+        required: true
+        type: boolean
+        default: false
+      kpm_password:
+        description: "Custom KPM Super Password (leave empty for default)"
+        required: false
+        type: string
+        default: ""
+      use_rekernel:
+        description: "Enable Re-Kernel Driver"
+        required: false
+        type: boolean
+        default: false
+      virtualization_support:
+        description: "Virtualization Support (6.1 only supports slot patches: off/678/123/345)"
+        required: false
+        type: choice
+        options:
+          - "off"
+          - "678"
+          - "123"
+          - "345"
+        default: "off"
+      use_custom_external_modules:
+        description: "Enable Custom External Module Injection"
+        required: false
+        type: boolean
+        default: false
+      custom_external_modules:
+        description: "Custom External Modules (supports repo;stage, module:repo;stage, set:repo#child;stage, separated by |)"
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  build-pixel8pro-kernel:
+    name: "Pixel 8 Pro (husky) | ${{ inputs.kernel_version }}.${{ inputs.sub_level }} | ${{ inputs.android_version }} | ${{ inputs.os_patch_level }}"
+    uses: ./.github/workflows/build.yml
+    secrets: inherit
+    with:
+      android_version: ${{ inputs.android_version }}
+      kernel_version: ${{ inputs.kernel_version }}
+      sub_level: ${{ inputs.sub_level }}
+      os_patch_level: ${{ inputs.os_patch_level }}
+      ksu_variant: "Official"
+      ksu_branch: "Latest(最新)"
+      virtualization_support: ${{ inputs.virtualization_support }}
+      use_zram: ${{ inputs.use_zram }}
+      zram_full_algo: ${{ inputs.zram_full_algo }}
+      zram_extra_algos: ${{ inputs.zram_extra_algos }}
+      use_bbg: ${{ inputs.use_bbg }}
+      use_ddk: ${{ inputs.use_ddk }}
+      use_ntsync: ${{ inputs.use_ntsync }}
+      use_networking: ${{ inputs.use_networking }}
+      use_kpm: ${{ inputs.use_kpm }}
+      kpm_password: ${{ inputs.kpm_password }}
+      use_rekernel: ${{ inputs.use_rekernel }}
+      enable_susfs: ${{ inputs.enable_susfs }}
+      use_custom_external_modules: ${{ inputs.use_custom_external_modules }}
+      custom_external_modules: ${{ inputs.custom_external_modules }}
+      supp_op: false
+      upload_aux_artifacts: true
+
+  get-ksu-manager:
+    uses: ./.github/workflows/get-manager.yml
+    secrets: inherit
+    with:
+      kernelsu_variant: "Official"
+      ksu_branch: "Latest(最新)"
