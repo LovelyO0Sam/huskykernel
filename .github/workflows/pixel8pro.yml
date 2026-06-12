@@ -207,9 +207,9 @@ jobs:
       # 9. Repo init + sync kernel manifest
       # ============================================================
       - name: 同步内核 manifest
-        working-directory: ${{ env.KERNEL_ROOT }}
         run: |
           mkdir -p "$KERNEL_ROOT"
+          cd "$KERNEL_ROOT"
           echo "repo init -b $KERNEL_BRANCH"
           $REPO init -u https://android.googlesource.com/kernel/manifest \
             -b "$KERNEL_BRANCH" --repo-rev=v2.16
