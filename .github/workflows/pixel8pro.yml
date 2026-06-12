@@ -204,84 +204,68 @@ jobs:
           echo "KERNEL_PATCHES=$GITHUB_WORKSPACE/kernel_patches" >> $GITHUB_ENV
 
       # ============================================================
-      # 9. Repo init + sync kernel manifest
+      # 9. Repo init + sync kernel manifest (shallow for speed)
       # ============================================================
       - name: 同步内核 manifest
         id: sync
         run: |
           mkdir -p "$KERNEL_ROOT"
           cd "$KERNEL_ROOT"
-          echo "repo init -b $KERNEL_BRANCH"
-          $REPO init -u https://android.googlesource.com/kernel/manifest \
+          echo "repo init (--depth=1) -b $KERNEL_BRANCH"
+          $REPO init --depth=1 \
+            -u https://android.googlesource.com/kernel/manifest \
             -b "$KERNEL_BRANCH" --repo-rev=v2.16
           $REPO sync -c -j$(nproc --all) --no-tags --fail-fast
           echo "=== repo sync done ==="
           ls -la
-          echo ""
-          echo "=== 搜索内核源码 ==="
-          for candidate in aosp common "."; do
-            if [ -d "$candidate/drivers" ] && [ -f "$candidate/Makefile" ]; then
-              KERNEL_SRC="$(realpath "$candidate")"
-              echo ">>> 内核源码已找到: $KERNEL_SRC"
-              echo "KERNEL_SRC=$KERNEL_SRC" >> $GITHUB_ENV
-              echo "DEFCONFIG=$KERNEL_SRC/arch/arm64/configs/gki_defconfig" >> $GITHUB_ENV
-              KVER=$(grep '^VERSION = ' "$KERNEL_SRC/Makefile" | awk '{print $3}')
-              KPATCH=$(grep '^PATCHLEVEL = ' "$KERNEL_SRC/Makefile" | awk '{print $3}')
-              KSUB=$(grep '^SUBLEVEL = ' "$KERNEL_SRC/Makefile" | awk '{print $3}')
-              echo "KERNEL_VERSION=${KVER}.${KPATCH}.${KSUB}" >> $GITHUB_ENV
-              echo "内核版本: ${KVER}.${KPATCH}.${KSUB}"
-              echo "source_ready=true" >> $GITHUB_OUTPUT
-              break
-            fi
-          done
-          if [ -z "${KERNEL_SRC:-}" ]; then
-            echo ">>> 内核源码未直接落盘，需通过首次构建获取"
+
+          # Check if aosp/ has full kernel source
+          if [ -d aosp/drivers ] && [ -f aosp/Makefile ]; then
+            echo ">>> 内核源码在 aosp/ (repo sync 已完整)"
+            KERNEL_SRC="$(realpath aosp)"
+            echo "KERNEL_SRC=$KERNEL_SRC" >> $GITHUB_ENV
+            echo "source_ready=true" >> $GITHUB_OUTPUT
+          elif [ -d common/drivers ] && [ -f common/Makefile ]; then
+            echo ">>> 内核源码在 common/"
+            KERNEL_SRC="$(realpath common)"
+            echo "KERNEL_SRC=$KERNEL_SRC" >> $GITHUB_ENV
+            echo "source_ready=true" >> $GITHUB_OUTPUT
+          else
+            echo ">>> 内核源码不完整，需显式拉取"
             echo "source_ready=false" >> $GITHUB_OUTPUT
           fi
 
+          if [ "${KERNEL_SRC:-}" ]; then
+            echo "DEFCONFIG=$KERNEL_SRC/arch/arm64/configs/gki_defconfig" >> $GITHUB_ENV
+            KVER=$(grep '^VERSION = ' "$KERNEL_SRC/Makefile" | awk '{print $3}')
+            KPATCH=$(grep '^PATCHLEVEL = ' "$KERNEL_SRC/Makefile" | awk '{print $3}')
+            KSUB=$(grep '^SUBLEVEL = ' "$KERNEL_SRC/Makefile" | awk '{print $3}')
+            echo "KERNEL_VERSION=${KVER}.${KPATCH}.${KSUB}" >> $GITHUB_ENV
+            echo "内核版本: ${KVER}.${KPATCH}.${KSUB}"
+          fi
+
       # ============================================================
-      # 10. First build (only if source not found — Bazel fetches it)
+      # 9b. Explicitly clone kernel source if shallow sync was incomplete
       # ============================================================
-      - name: 首次构建 (stock kernel — 下载源码)
+      - name: 显式拉取内核源码
         if: steps.sync.outputs.source_ready == 'false'
         working-directory: ${{ env.KERNEL_ROOT }}
-        timeout-minutes: 50
         run: |
           set -e
-          echo "=== 首次构建: Bazel 将下载内核源码 ==="
-          BUILD_AOSP_KERNEL=1 bash build_shusky.sh 2>&1 | tail -100
-          echo "=== 构建完成 ==="
-          ls -la out/shusky/dist/ 2>/dev/null || true
-          echo ""
-          echo "=== 搜索 drivers/ (Bazel 工作区) ==="
-          find . -maxdepth 6 -type d -name "drivers" 2>/dev/null | head -10
+          echo "=== 克隆 GKI kernel/common android14-6.1 → aosp/ ==="
+          rm -rf aosp
+          git clone --depth=1 \
+            https://android.googlesource.com/kernel/common \
+            -b android14-6.1 aosp
 
-      # ============================================================
-      # 11. Locate kernel source
-      # ============================================================
-      - name: 定位内核源码目录
-        if: steps.sync.outputs.source_ready == 'false'
-        working-directory: ${{ env.KERNEL_ROOT }}
-        run: |
-          set -euo pipefail
-          echo "=== 搜索 drivers/ + Makefile ==="
-          KERNEL_SRC=""
-          # Priority: aosp (Pixel device kernel), common (GKI), bazel output
-          for candidate_dir in $(find . -maxdepth 6 -type d -name "drivers" 2>/dev/null | while read d; do dirname "$d"; done | sort -u); do
-            if [ -f "$candidate_dir/Makefile" ]; then
-              KERNEL_SRC="$(realpath "$candidate_dir")"
-              echo ">>> 找到: $KERNEL_SRC"
-              break
-            fi
-          done
-          if [ -z "$KERNEL_SRC" ]; then
-            echo "::error::找不到内核源码"
-            find . -maxdepth 4 -type d 2>/dev/null | sort | head -60
-            exit 1
-          fi
+          echo "=== 验证 aosp/ 内容 ==="
+          ls aosp/ | head -20
+          echo "drivers: $( [ -d aosp/drivers ] && echo YES || echo NO )"
+          echo "Makefile: $( [ -f aosp/Makefile ] && echo YES || echo NO )"
+
+          KERNEL_SRC="$(realpath aosp)"
           echo "KERNEL_SRC=$KERNEL_SRC" >> $GITHUB_ENV
           echo "DEFCONFIG=$KERNEL_SRC/arch/arm64/configs/gki_defconfig" >> $GITHUB_ENV
-
           KVER=$(grep '^VERSION = ' "$KERNEL_SRC/Makefile" | awk '{print $3}')
           KPATCH=$(grep '^PATCHLEVEL = ' "$KERNEL_SRC/Makefile" | awk '{print $3}')
           KSUB=$(grep '^SUBLEVEL = ' "$KERNEL_SRC/Makefile" | awk '{print $3}')
@@ -289,7 +273,7 @@ jobs:
           echo "内核版本: ${KVER}.${KPATCH}.${KSUB}"
 
       # ============================================================
-      # 12. Apply KernelSU Official
+      # 10. Apply KernelSU Official
       # ============================================================
       - name: 添加 KernelSU Official
         working-directory: ${{ env.KERNEL_SRC }}
