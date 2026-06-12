@@ -5,22 +5,8 @@ on:
     inputs:
       # ==================== 内核版本配置 ====================
       # Pixel 8 Pro (husky) uses Tensor G3 with GKI kernel android14-6.1.
-      # This is the GKI branch name — NOT your phone's Android platform version.
-      # The same android14-6.1 kernel works on Android 14, 15, and 16.
-      android_version:
-        description: "GKI Branch (Pixel 8 Pro only supports android14-6.1)"
-        required: true
-        type: choice
-        options:
-          - android14
-        default: android14
-      kernel_version:
-        description: "Kernel Version (Pixel 8 Pro only supports 6.1)"
-        required: true
-        type: choice
-        options:
-          - "6.1"
-        default: "6.1"
+      # Kernel branch: android-gs-shusky-6.1-android16
+      # Build from AOSP common kernel: common-android14-6.1-<patch_level>
       sub_level:
         description: "Sub Level (e.g. 129, 162, X for lts)"
         required: true
@@ -115,12 +101,12 @@ permissions:
 
 jobs:
   build-pixel8pro-kernel:
-    name: "Pixel 8 Pro (husky) | ${{ inputs.kernel_version }}.${{ inputs.sub_level }} | ${{ inputs.android_version }} | ${{ inputs.os_patch_level }}"
+    name: "Pixel 8 Pro (husky) | 6.1.${{ inputs.sub_level }} | android14 | ${{ inputs.os_patch_level }}"
     uses: ./.github/workflows/build.yml
     secrets: inherit
     with:
-      android_version: ${{ inputs.android_version }}
-      kernel_version: ${{ inputs.kernel_version }}
+      android_version: "android14"
+      kernel_version: "6.1"
       sub_level: ${{ inputs.sub_level }}
       os_patch_level: ${{ inputs.os_patch_level }}
       ksu_variant: "Official"
