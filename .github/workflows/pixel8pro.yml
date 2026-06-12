@@ -273,27 +273,57 @@ jobs:
           $REPO --trace sync -c -j$(nproc --all) --no-tags --fail-fast
           echo "REMOTE_BRANCH=${{ env.KERNEL_BRANCH }}" >> $GITHUB_ENV
 
+          # 列出顶层目录结构以便调试
+          echo "repo sync 完成，顶层目录:"
+          ls -la
+
       # ============================================================
-      # 10. 提取内核版本信息
+      # 10. 探测内核源码目录 & 版本信息
       # ============================================================
-      - name: 提取内核版本信息
+      - name: 探测内核源码目录
+        working-directory: ${{ env.KERNEL_ROOT }}
         run: |
-          if [[ -f "$KERNEL_ROOT/common/Makefile" ]]; then
-            KVER=$(grep '^VERSION = ' "$KERNEL_ROOT/common/Makefile" | awk '{print $3}')
-            KPATCH=$(grep '^PATCHLEVEL = ' "$KERNEL_ROOT/common/Makefile" | awk '{print $3}')
-            KSUB=$(grep '^SUBLEVEL = ' "$KERNEL_ROOT/common/Makefile" | awk '{print $3}')
-            echo "KERNEL_VERSION=${KVER}.${KPATCH}.${KSUB}" >> $GITHUB_ENV
-            echo "内核版本: ${KVER}.${KPATCH}.${KSUB}"
+          set -euo pipefail
+
+          # 按优先级查找内核源码目录（必须包含 drivers/ 子目录）
+          for candidate in \
+            "common" \
+            "." \
+            "kernel" \
+            "out"; do
+            if [ -d "$candidate/drivers" ] && [ -f "$candidate/Makefile" ]; then
+              KERNEL_SRC="$(realpath "$candidate")"
+              echo "内核源码目录: $KERNEL_SRC"
+              echo "KERNEL_SRC=$KERNEL_SRC" >> $GITHUB_ENV
+              break
+            fi
+          done
+
+          if [ -z "${KERNEL_SRC:-}" ]; then
+            echo "::error::找不到内核源码目录 (drivers/ + Makefile)"
+            echo "目录结构:"
+            find . -maxdepth 3 -type d | head -50
+            exit 1
           fi
+
+          # 提取内核版本
+          KVER=$(grep '^VERSION = ' "$KERNEL_SRC/Makefile" | awk '{print $3}')
+          KPATCH=$(grep '^PATCHLEVEL = ' "$KERNEL_SRC/Makefile" | awk '{print $3}')
+          KSUB=$(grep '^SUBLEVEL = ' "$KERNEL_SRC/Makefile" | awk '{print $3}')
+          echo "KERNEL_VERSION=${KVER}.${KPATCH}.${KSUB}" >> $GITHUB_ENV
           echo "ACTUAL_SUBLEVEL=${KSUB:-0}" >> $GITHUB_ENV
+          echo "内核版本: ${KVER}.${KPATCH}.${KSUB}"
+          echo "DEFCONFIG=$KERNEL_SRC/arch/arm64/configs/gki_defconfig" >> $GITHUB_ENV
 
       # ============================================================
       # 11. 添加 KernelSU Official
       # ============================================================
       - name: 添加 KernelSU Official
-        working-directory: ${{ env.KERNEL_ROOT }}/common
+        working-directory: ${{ env.KERNEL_SRC }}
         run: |
           echo "添加 KernelSU Official..."
+          echo "当前目录: $(pwd)"
+          echo "drivers/ 存在: $([ -d drivers ] && echo yes || echo no)"
           BRANCH="${{ env.KERNEL_BRANCH }}"
           curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s "$BRANCH"
 
@@ -322,12 +352,12 @@ jobs:
           echo "应用 SUSFS 补丁到 android14-6.1..."
 
           # 复制 SUSFS 文件
-          cp $SUSFS4KSU/kernel_patches/50_add_susfs_in_gki-android14-6.1.patch ./common/
-          cp $SUSFS4KSU/kernel_patches/fs/* ./common/fs/ 2>/dev/null || true
-          cp $SUSFS4KSU/kernel_patches/include/linux/* ./common/include/linux/ 2>/dev/null || true
+          cp $SUSFS4KSU/kernel_patches/50_add_susfs_in_gki-android14-6.1.patch "$KERNEL_SRC/"
+          cp $SUSFS4KSU/kernel_patches/fs/* "$KERNEL_SRC/fs/" 2>/dev/null || true
+          cp $SUSFS4KSU/kernel_patches/include/linux/* "$KERNEL_SRC/include/linux/" 2>/dev/null || true
 
           # 应用 KernelSU SUSFS 补丁
-          cd ./common/KernelSU
+          cd "$KERNEL_SRC/KernelSU"
           cp $SUSFS4KSU/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch ./
           if grep -q '^diff --git a/kernel/Makefile b/kernel/Makefile' ./10_enable_susfs_for_ksu.patch \
             && ! grep -q '^diff --git a/kernel/Kbuild b/kernel/Kbuild' ./10_enable_susfs_for_ksu.patch; then
@@ -360,9 +390,8 @@ jobs:
       # ============================================================
       - name: 配置 SUSFS defconfig
         if: inputs.enable_susfs
-        working-directory: ${{ env.KERNEL_ROOT }}
         run: |
-          DEFCONFIG="common/arch/arm64/configs/gki_defconfig"
+          DEFCONFIG="$KERNEL_SRC/arch/arm64/configs/gki_defconfig"
           cat >> "$DEFCONFIG" << 'EOF'
           CONFIG_KSU_SUSFS=y
           CONFIG_KSU_SUSFS_SUS_PATH=y
@@ -382,7 +411,7 @@ jobs:
       # ============================================================
       - name: 应用 ZRAM 补丁
         if: inputs.use_zram
-        working-directory: ${{ env.KERNEL_ROOT }}/common
+        working-directory: ${{ env.KERNEL_SRC }}
         run: |
           echo "应用 ZRAM 增强补丁..."
           ZRAM_PATCHES="$KERNEL_PATCHES/wild/zram"
@@ -421,7 +450,7 @@ jobs:
       # ============================================================
       - name: 应用 BBG 补丁
         if: inputs.use_bbg
-        working-directory: ${{ env.KERNEL_ROOT }}/common
+        working-directory: ${{ env.KERNEL_SRC }}
         run: |
           echo "应用 BBG 防砖补丁..."
           BBG_PATCH="$KERNEL_PATCHES/wild/bbg/bbg.patch"
@@ -440,7 +469,7 @@ jobs:
       # ============================================================
       - name: 应用 DDK LSM
         if: inputs.use_ddk
-        working-directory: ${{ env.KERNEL_ROOT }}/common
+        working-directory: ${{ env.KERNEL_SRC }}
         run: |
           echo "应用 DDK LSM..."
           DDK_PATCH="$KERNEL_PATCHES/wild/ddk/ddk.patch"
@@ -454,7 +483,7 @@ jobs:
       # ============================================================
       - name: 应用 NTsync
         if: inputs.use_ntsync
-        working-directory: ${{ env.KERNEL_ROOT }}/common
+        working-directory: ${{ env.KERNEL_SRC }}
         run: |
           echo "应用 NTsync..."
           NTSYNC_PATCH="$KERNEL_PATCHES/wild/ntsync/ntsync.patch"
@@ -473,7 +502,7 @@ jobs:
       # ============================================================
       - name: 应用 Networking 增强
         if: inputs.use_networking
-        working-directory: ${{ env.KERNEL_ROOT }}/common
+        working-directory: ${{ env.KERNEL_SRC }}
         run: |
           echo "应用 Networking 增强 (IPSet + BBR)..."
           IPSET_PATCH="$KERNEL_PATCHES/wild/networking/ipset.patch"
@@ -498,7 +527,7 @@ jobs:
       # ============================================================
       - name: 应用 KPM
         if: inputs.use_kpm
-        working-directory: ${{ env.KERNEL_ROOT }}/common
+        working-directory: ${{ env.KERNEL_SRC }}
         run: |
           echo "::warning::KPM 不支持 Official KernelSU，已跳过"
           echo "如需 KPM，请使用 SukiSU 或 ReSukiSU 变体"
@@ -509,7 +538,7 @@ jobs:
       # ============================================================
       - name: 应用虚拟化补丁
         if: inputs.virtualization_support != 'off'
-        working-directory: ${{ env.KERNEL_ROOT }}/common
+        working-directory: ${{ env.KERNEL_SRC }}
         run: |
           echo "应用虚拟化 slot patches: ${{ inputs.virtualization_support }}"
           VIRT_PATCH="$KERNEL_PATCHES/wild/virtualization/slot_${{ inputs.virtualization_support }}.patch"
@@ -526,24 +555,24 @@ jobs:
         working-directory: ${{ env.KERNEL_ROOT }}
         run: |
           # 移除 protected_exports_list 避免 Kleaf trim 失败
-          sed -i '/^[[:space:]]*"protected_exports_list"[[:space:]]*:/d' ./common/BUILD.bazel 2>/dev/null || true
-          sed -i '/kmi_symbol_list_strict_mode/d' ./common/BUILD.bazel 2>/dev/null || true
-          rm -rf ./common/android/abi_gki_protected_exports_* 2>/dev/null || true
+          sed -i '/^[[:space:]]*"protected_exports_list"[[:space:]]*:/d' "$KERNEL_SRC/BUILD.bazel" 2>/dev/null || true
+          sed -i '/kmi_symbol_list_strict_mode/d' "$KERNEL_SRC/BUILD.bazel" 2>/dev/null || true
+          rm -rf "$KERNEL_SRC/android/abi_gki_protected_exports_"* 2>/dev/null || true
           sed -i "/stable_scmversion_cmd/s/-maybe-dirty//g" ./build/kernel/kleaf/impl/stamp.bzl 2>/dev/null || true
 
           VERSION_INPUT=$(echo "${{ inputs.version }}" | tr -d '[:space:]')
           if [ -n "$VERSION_INPUT" ]; then
             CLEAN_VERSION=$(echo "$VERSION_INPUT" | sed -E 's/^[0-9]+\.[0-9]+\.[0-9]+//')
-            sed -i '/^CONFIG_LOCALVERSION=/ s/="\([^"]*\)"/="'"$CLEAN_VERSION"'"/' ./common/arch/arm64/configs/gki_defconfig 2>/dev/null || true
+            sed -i '/^CONFIG_LOCALVERSION=/ s/="\([^"]*\)"/="'"$CLEAN_VERSION"'"/' "$KERNEL_SRC/arch/arm64/configs/gki_defconfig" 2>/dev/null || true
             echo "自定义版本: $CLEAN_VERSION"
           else
-            cd ./common
+            cd "$KERNEL_SRC"
             BID="ab$((RANDOM % 90000000 + 10000000))"
             GHASH=$(git rev-parse --verify HEAD | cut -c1-13)
             KMI_LOCAL="-android14-11-g${GHASH}-${BID}-4k"
             sed -i "/^CONFIG_LOCALVERSION=/ s/=\"[^\"]*\"/=\"${KMI_LOCAL}\"/" ./arch/arm64/configs/gki_defconfig 2>/dev/null || true
             echo "自动版本: $KMI_LOCAL"
-            cd ..
+            cd "$KERNEL_ROOT"
           fi
 
       # ============================================================
