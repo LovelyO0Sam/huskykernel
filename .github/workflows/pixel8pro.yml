@@ -292,22 +292,23 @@ jobs:
           echo "KSU_GIT_VERSION=$KSU_GIT_VERSION" >> $GITHUB_ENV
           if [ -f "kernel/Kbuild" ]; then
             sed -i "s/DKSU_VERSION=16/DKSU_VERSION=${KSU_VERSION}/" kernel/Kbuild
-            # Fix KSU_GIT_VERSION if missing
             if ! grep -q "^KSU_GIT_VERSION" kernel/Kbuild; then
-              echo "KSU_GIT_VERSION := ${KSU_GIT_VERSION}" >> kernel/Kbuild
+              sed -i "1s|^|KSU_GIT_VERSION := ${KSU_GIT_VERSION}\n|" kernel/Kbuild
             fi
           fi
           cd ..
 
-          # KernelSU setup.sh also puts hooks in drivers/kernelsu/ — fix version there too
+          # KernelSU setup.sh also puts hooks in drivers/kernelsu/ — fix version there too.
+          # Must be at TOP of Kbuild (before line 99 where it's referenced).
           if [ -f drivers/kernelsu/Kbuild ]; then
             sed -i "s/DKSU_VERSION=16/DKSU_VERSION=${KSU_VERSION}/" drivers/kernelsu/Kbuild 2>/dev/null || true
             if grep -q "KSU_GIT_VERSION" drivers/kernelsu/Kbuild; then
               sed -i "s/^KSU_GIT_VERSION := .*/KSU_GIT_VERSION := ${KSU_GIT_VERSION}/" drivers/kernelsu/Kbuild
             else
-              echo "KSU_GIT_VERSION := ${KSU_GIT_VERSION}" >> drivers/kernelsu/Kbuild
+              sed -i "1s|^|KSU_GIT_VERSION := ${KSU_GIT_VERSION}\n|" drivers/kernelsu/Kbuild
             fi
-            echo "Fixed KSU_GIT_VERSION in drivers/kernelsu/Kbuild"
+            echo "Fixed KSU_GIT_VERSION at line 1 of drivers/kernelsu/Kbuild"
+            head -3 drivers/kernelsu/Kbuild
           fi
           echo "KernelSU 版本: $KSU_VERSION (git: $KSU_GIT_VERSION)"
 
@@ -489,6 +490,29 @@ jobs:
             sed -i "/^CONFIG_LOCALVERSION=/ s/=\"[^\"]*\"/=\"${KMI}\"/" "$D" 2>/dev/null || true
             echo "Version: $KMI"
           fi
+
+      # ============================================================
+      # 22b. Pre-build verification
+      # ============================================================
+      - name: 构建前校验
+        run: |
+          echo "=== 构建前关键文件校验 ==="
+          echo ""
+          echo "1. KSU_GIT_VERSION in drivers/kernelsu/Kbuild:"
+          if [ -f "$KERNEL_SRC/drivers/kernelsu/Kbuild" ]; then
+            head -5 "$KERNEL_SRC/drivers/kernelsu/Kbuild"
+            grep -n "KSU_GIT_VERSION\|DKSU_VERSION" "$KERNEL_SRC/drivers/kernelsu/Kbuild" || echo "  (not found!)"
+          else
+            echo "  FILE MISSING!"
+          fi
+          echo ""
+          echo "2. TCP congestion modules in defconfig:"
+          D="$KERNEL_SRC/arch/arm64/configs/gki_defconfig"
+          grep "CONFIG_TCP_CONG" "$D" 2>/dev/null || echo "  (none)"
+          echo ""
+          echo "3. KERNEL_SRC: $KERNEL_SRC"
+          echo "   Makefile: $([ -f $KERNEL_SRC/Makefile ] && echo YES || echo NO)"
+          echo "   drivers:  $([ -d $KERNEL_SRC/drivers ] && echo YES || echo NO)"
 
       # ============================================================
       # 23. Second build (with patches)
