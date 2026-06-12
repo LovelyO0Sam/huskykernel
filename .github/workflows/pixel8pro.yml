@@ -291,7 +291,7 @@ jobs:
       # 11. 添加 KernelSU Official
       # ============================================================
       - name: 添加 KernelSU Official
-        working-directory: ${{ env.KERNEL_ROOT }}
+        working-directory: ${{ env.KERNEL_ROOT }}/common
         run: |
           echo "添加 KernelSU Official..."
           BRANCH="${{ env.KERNEL_BRANCH }}"
@@ -327,7 +327,7 @@ jobs:
           cp $SUSFS4KSU/kernel_patches/include/linux/* ./common/include/linux/ 2>/dev/null || true
 
           # 应用 KernelSU SUSFS 补丁
-          cd ./KernelSU
+          cd ./common/KernelSU
           cp $SUSFS4KSU/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch ./
           if grep -q '^diff --git a/kernel/Makefile b/kernel/Makefile' ./10_enable_susfs_for_ksu.patch \
             && ! grep -q '^diff --git a/kernel/Kbuild b/kernel/Kbuild' ./10_enable_susfs_for_ksu.patch; then
@@ -336,8 +336,7 @@ jobs:
           patch -p1 --forward < 10_enable_susfs_for_ksu.patch || true
           cd ..
 
-          # 应用 GKI SUSFS 补丁
-          cd common
+          # 应用 GKI SUSFS 补丁（当前已在 common/ 目录）
           patch -p1 < 50_add_susfs_in_gki-android14-6.1.patch || true
 
           # 修复 task_mmu.c 兼容性
