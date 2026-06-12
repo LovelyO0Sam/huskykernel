@@ -289,11 +289,27 @@ jobs:
           KSU_GIT_VERSION=$(git rev-list --count HEAD)
           KSU_VERSION=$((30000 + KSU_GIT_VERSION))
           echo "KSU_VERSION=$KSU_VERSION" >> $GITHUB_ENV
+          echo "KSU_GIT_VERSION=$KSU_GIT_VERSION" >> $GITHUB_ENV
           if [ -f "kernel/Kbuild" ]; then
             sed -i "s/DKSU_VERSION=16/DKSU_VERSION=${KSU_VERSION}/" kernel/Kbuild
+            # Fix KSU_GIT_VERSION if missing
+            if ! grep -q "^KSU_GIT_VERSION" kernel/Kbuild; then
+              echo "KSU_GIT_VERSION := ${KSU_GIT_VERSION}" >> kernel/Kbuild
+            fi
           fi
           cd ..
-          echo "KernelSU 版本: $KSU_VERSION"
+
+          # KernelSU setup.sh also puts hooks in drivers/kernelsu/ — fix version there too
+          if [ -f drivers/kernelsu/Kbuild ]; then
+            sed -i "s/DKSU_VERSION=16/DKSU_VERSION=${KSU_VERSION}/" drivers/kernelsu/Kbuild 2>/dev/null || true
+            if grep -q "KSU_GIT_VERSION" drivers/kernelsu/Kbuild; then
+              sed -i "s/^KSU_GIT_VERSION := .*/KSU_GIT_VERSION := ${KSU_GIT_VERSION}/" drivers/kernelsu/Kbuild
+            else
+              echo "KSU_GIT_VERSION := ${KSU_GIT_VERSION}" >> drivers/kernelsu/Kbuild
+            fi
+            echo "Fixed KSU_GIT_VERSION in drivers/kernelsu/Kbuild"
+          fi
+          echo "KernelSU 版本: $KSU_VERSION (git: $KSU_GIT_VERSION)"
 
       # ============================================================
       # 13. Apply SUSFS
@@ -422,7 +438,12 @@ jobs:
           for cfg in "CONFIG_TCP_CONG_ADVANCED=y" "CONFIG_TCP_CONG_BBR=y" "CONFIG_DEFAULT_BBR=y" 'CONFIG_DEFAULT_TCP_CONG="bbr"' "CONFIG_NET_SCH_FQ=y"; do
             grep -qF "$cfg" "$D" || echo "$cfg" >> "$D"
           done
-          echo "Networking done"
+          # Disable non-essential TCP congestion modules — they cause
+          # Kleaf module_outs errors since Pixel BUILD.bazel doesn't list them
+          for cfg in "CONFIG_TCP_CONG_BIC" "CONFIG_TCP_CONG_HTCP" "CONFIG_TCP_CONG_WESTWOOD"; do
+            sed -i "s/${cfg}=./${cfg}=n/" "$D" 2>/dev/null || echo "${cfg}=n" >> "$D"
+          done
+          echo "Networking done (bic/htcp/westwood disabled for Kleaf compat)"
 
       # ============================================================
       # 20. KPM
