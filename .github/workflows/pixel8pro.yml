@@ -446,35 +446,20 @@ jobs:
           # Also fix Kleaf BUILD.bazel module_outs — insert missing TCP modules
           BUILD_BAZEL="$KERNEL_ROOT/private/devices/google/shusky/BUILD.bazel"
           if [ -f "$BUILD_BAZEL" ]; then
-            cat > /tmp/fix_modules.py << PYEOF
-import sys
-build = sys.argv[1]
-with open(build) as f:
-    lines = f.readlines()
-
-# find module_outs section and its closing bracket
-in_ms = False
-ins = None
-for i, line in enumerate(lines):
-    if 'module_outs' in line:
-        in_ms = True
-    if in_ms and line.strip().startswith(']'):
-        ins = i
-        break
-
-new = ['net/ipv4/tcp_bic.ko', 'net/ipv4/tcp_htcp.ko', 'net/ipv4/tcp_westwood.ko']
-prefix = line[:len(line) - len(line.lstrip())]  # match indent
-missing = [m for m in new if m not in ''.join(lines)]
-if missing and ins:
-    for m in reversed(missing):
-        lines.insert(ins, f'{prefix}"{m}",\n')
-    with open(build, 'w') as f:
-        f.writelines(lines)
-    print(f'Added to module_outs: {missing}')
-else:
-    print('module_outs already ok or section not found')
-PYEOF
-            python3 /tmp/fix_modules.py "$BUILD_BAZEL"
+            for mod in "net/ipv4/tcp_bic.ko" "net/ipv4/tcp_htcp.ko" "net/ipv4/tcp_westwood.ko"; do
+              if ! grep -qF "\"$mod\"" "$BUILD_BAZEL"; then
+                awk -v mod="$mod" '
+                  /module_outs/ { in_ms=1 }
+                  in_ms && /^[[:space:]]*\]/ {
+                    pad = $0; gsub(/[^ ].*/, "", pad)
+                    printf "%s\"%s\",\n", pad, mod
+                    in_ms = 0
+                  }
+                  { print }
+                ' "$BUILD_BAZEL" > "$BUILD_BAZEL.tmp" && mv "$BUILD_BAZEL.tmp" "$BUILD_BAZEL"
+                echo "Added $mod to BUILD.bazel module_outs"
+              fi
+            done
           fi
           echo "Networking done (bic/htcp/westwood disabled + BUILD.bazel patched)"
 
