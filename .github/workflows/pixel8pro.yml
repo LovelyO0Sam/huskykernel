@@ -207,6 +207,7 @@ jobs:
       # 9. Repo init + sync kernel manifest
       # ============================================================
       - name: 同步内核 manifest
+        id: sync
         run: |
           mkdir -p "$KERNEL_ROOT"
           cd "$KERNEL_ROOT"
@@ -215,61 +216,69 @@ jobs:
             -b "$KERNEL_BRANCH" --repo-rev=v2.16
           $REPO sync -c -j$(nproc --all) --no-tags --fail-fast
           echo "=== repo sync done ==="
-          echo "顶层目录:"
           ls -la
           echo ""
-          echo "=== 搜索内核 Makefile ==="
-          find . -maxdepth 3 -name "Makefile" 2>/dev/null | head -20 || echo "(none found)"
+          echo "=== 搜索内核源码 ==="
+          for candidate in aosp common "."; do
+            if [ -d "$candidate/drivers" ] && [ -f "$candidate/Makefile" ]; then
+              KERNEL_SRC="$(realpath "$candidate")"
+              echo ">>> 内核源码已找到: $KERNEL_SRC"
+              echo "KERNEL_SRC=$KERNEL_SRC" >> $GITHUB_ENV
+              echo "DEFCONFIG=$KERNEL_SRC/arch/arm64/configs/gki_defconfig" >> $GITHUB_ENV
+              KVER=$(grep '^VERSION = ' "$KERNEL_SRC/Makefile" | awk '{print $3}')
+              KPATCH=$(grep '^PATCHLEVEL = ' "$KERNEL_SRC/Makefile" | awk '{print $3}')
+              KSUB=$(grep '^SUBLEVEL = ' "$KERNEL_SRC/Makefile" | awk '{print $3}')
+              echo "KERNEL_VERSION=${KVER}.${KPATCH}.${KSUB}" >> $GITHUB_ENV
+              echo "内核版本: ${KVER}.${KPATCH}.${KSUB}"
+              echo "source_ready=true" >> $GITHUB_OUTPUT
+              break
+            fi
+          done
+          if [ -z "${KERNEL_SRC:-}" ]; then
+            echo ">>> 内核源码未直接落盘，需通过首次构建获取"
+            echo "source_ready=false" >> $GITHUB_OUTPUT
+          fi
 
       # ============================================================
-      # 10. First build (stock) — fetches kernel source via Bazel
+      # 10. First build (only if source not found — Bazel fetches it)
       # ============================================================
-      - name: 首次构建 (stock kernel)
+      - name: 首次构建 (stock kernel — 下载源码)
+        if: steps.sync.outputs.source_ready == 'false'
         working-directory: ${{ env.KERNEL_ROOT }}
         timeout-minutes: 50
         run: |
           set -e
-          echo "=== 首次构建: stock Pixel 8 Pro kernel ==="
-
-          # Run Kleaf build — this downloads kernel source & builds
+          echo "=== 首次构建: Bazel 将下载内核源码 ==="
           BUILD_AOSP_KERNEL=1 bash build_shusky.sh 2>&1 | tail -100
-
-          echo "=== 首次构建完成 ==="
+          echo "=== 构建完成 ==="
+          ls -la out/shusky/dist/ 2>/dev/null || true
           echo ""
-          echo "=== out/shusky/dist/ 内容 ==="
-          ls -la out/shusky/dist/ 2>/dev/null || echo "(out/shusky/dist not found)"
-          echo ""
-          echo "=== 搜索内核源码 ==="
-          find . -maxdepth 4 -name "Makefile" 2>/dev/null | head -20
-          find . -maxdepth 3 -type d -name "drivers" 2>/dev/null | head -10
+          echo "=== 搜索 drivers/ (Bazel 工作区) ==="
+          find . -maxdepth 6 -type d -name "drivers" 2>/dev/null | head -10
 
       # ============================================================
-      # 11. Locate kernel source (after Bazel fetched it)
+      # 11. Locate kernel source
       # ============================================================
       - name: 定位内核源码目录
+        if: steps.sync.outputs.source_ready == 'false'
         working-directory: ${{ env.KERNEL_ROOT }}
         run: |
           set -euo pipefail
           echo "=== 搜索 drivers/ + Makefile ==="
-
-          # Search broadly — Bazel workspace can put source in various places
           KERNEL_SRC=""
-          for candidate in $(find . -maxdepth 5 -type d -name "drivers" 2>/dev/null); do
-            candidate_dir="$(dirname "$candidate")"
+          # Priority: aosp (Pixel device kernel), common (GKI), bazel output
+          for candidate_dir in $(find . -maxdepth 6 -type d -name "drivers" 2>/dev/null | while read d; do dirname "$d"; done | sort -u); do
             if [ -f "$candidate_dir/Makefile" ]; then
               KERNEL_SRC="$(realpath "$candidate_dir")"
-              echo ">>> 找到内核源码: $KERNEL_SRC"
+              echo ">>> 找到: $KERNEL_SRC"
               break
             fi
           done
-
           if [ -z "$KERNEL_SRC" ]; then
-            echo "::error::找不到内核源码目录 (drivers/ + Makefile)"
-            echo "完整目录树 (maxdepth 4):"
-            find . -maxdepth 4 -type d 2>/dev/null | sort | head -80
+            echo "::error::找不到内核源码"
+            find . -maxdepth 4 -type d 2>/dev/null | sort | head -60
             exit 1
           fi
-
           echo "KERNEL_SRC=$KERNEL_SRC" >> $GITHUB_ENV
           echo "DEFCONFIG=$KERNEL_SRC/arch/arm64/configs/gki_defconfig" >> $GITHUB_ENV
 
