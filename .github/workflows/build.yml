@@ -20,6 +20,11 @@ on:
       os_patch_level:
         required: true
         type: string
+      kernel_branch:
+        description: "Device kernel manifest branch (e.g. android-gs-shusky-6.1-android16). Overrides common-* construction when set."
+        required: false
+        type: string
+        default: ""
 
       # ==================== KernelSU 配置 ====================
       ksu_variant:
@@ -130,7 +135,7 @@ on:
 
 jobs:
   build-kernel:
-    name: "${{ inputs.kernel_version }}.${{ inputs.sub_level }}-${{ inputs.android_version }}-${{ inputs.os_patch_level }}-${{ inputs.ksu_variant }}"
+    name: "${{ inputs.kernel_branch || format('{0}.{1}-{2}-{3}', inputs.kernel_version, inputs.sub_level, inputs.android_version, inputs.os_patch_level) }}-${{ inputs.ksu_variant }}"
     runs-on: ubuntu-latest
     timeout-minutes: 60
 
@@ -230,6 +235,11 @@ jobs:
             && { [ "${{ inputs.ksu_branch }}" = "Dev(开发)" ] || [ "${{ inputs.ksu_branch }}" = "Latest(最新)" ]; }; then
             echo "::error::ReSukiSU 仅 Stable(标准) / Custom(自定义) 支持 KPM，请切换分支或关闭 KPM。"
             exit 1
+          fi
+
+          if [ -n "${{ inputs.kernel_branch }}" ]; then
+            echo "使用设备内核分支，跳过 sub_level/os_patch_level 校验: ${{ inputs.kernel_branch }}"
+            exit 0
           fi
 
           if [ "$sub_level" = "X" ] || [ "$os_patch_level" = "lts" ]; then
@@ -939,17 +949,25 @@ jobs:
         run: |
           git clone https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-gnu-6.4.1.git gcc
 
-          FORMATTED_BRANCH="${{ inputs.android_version }}-${{ inputs.kernel_version }}-${{ inputs.os_patch_level }}"
-          echo "初始化 repo，分支: common-${FORMATTED_BRANCH}"
+          if [ -n "${{ inputs.kernel_branch }}" ]; then
+            MANIFEST_BRANCH="${{ inputs.kernel_branch }}"
+          else
+            MANIFEST_BRANCH="common-${{ inputs.android_version }}-${{ inputs.kernel_version }}-${{ inputs.os_patch_level }}"
+          fi
+          echo "初始化 repo，分支: ${MANIFEST_BRANCH}"
 
-          $REPO init --depth=1 -u https://android.googlesource.com/kernel/manifest -b common-${FORMATTED_BRANCH} --repo-rev=v2.16
+          $REPO init --depth=1 -u https://android.googlesource.com/kernel/manifest -b "${MANIFEST_BRANCH}" --repo-rev=v2.16
 
-          REMOTE_BRANCH=$(git ls-remote https://android.googlesource.com/kernel/common ${FORMATTED_BRANCH})
-          DEFAULT_MANIFEST_PATH=.repo/manifests/default.xml
-
-          if grep -q deprecated <<< $REMOTE_BRANCH; then
-            echo "检测到已弃用的分支: $FORMATTED_BRANCH"
-            sed -i "s/\"${FORMATTED_BRANCH}\"/\"deprecated\/${FORMATTED_BRANCH}\"/g" $DEFAULT_MANIFEST_PATH
+          if [ -z "${{ inputs.kernel_branch }}" ]; then
+            FORMATTED_BRANCH="${{ inputs.android_version }}-${{ inputs.kernel_version }}-${{ inputs.os_patch_level }}"
+            REMOTE_BRANCH=$(git ls-remote https://android.googlesource.com/kernel/common ${FORMATTED_BRANCH})
+            DEFAULT_MANIFEST_PATH=.repo/manifests/default.xml
+            if grep -q deprecated <<< $REMOTE_BRANCH; then
+              echo "检测到已弃用的分支: $FORMATTED_BRANCH"
+              sed -i "s/\"${FORMATTED_BRANCH}\"/\"deprecated\/${FORMATTED_BRANCH}\"/g" $DEFAULT_MANIFEST_PATH
+            fi
+          else
+            REMOTE_BRANCH="${MANIFEST_BRANCH}"
           fi
 
           $REPO --trace sync -c -j$(nproc --all) --no-tags --fail-fast

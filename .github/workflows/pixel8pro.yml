@@ -96,7 +96,7 @@ permissions:
 
 jobs:
   build-pixel8pro-kernel:
-    name: "Pixel 8 Pro (husky) | android14-6.1${{ inputs.version && format(' | {0}', inputs.version) || '' }}"
+    name: "Pixel 8 Pro (husky) | android-gs-shusky-6.1-android16${{ inputs.version && format(' | {0}', inputs.version) || '' }}"
     uses: ./.github/workflows/build.yml
     secrets: inherit
     with:
@@ -104,6 +104,7 @@ jobs:
       kernel_version: "6.1"
       sub_level: "X"
       os_patch_level: "lts"
+      kernel_branch: "android-gs-shusky-6.1-android16"
       version: ${{ inputs.version }}
       ksu_variant: "Official"
       ksu_branch: "Latest(最新)"
