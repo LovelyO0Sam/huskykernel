@@ -3,14 +3,11 @@ name: Pixel 8 Pro (husky) Kernel Builder
 on:
   workflow_dispatch:
     inputs:
-      # ==================== 构建标识 ====================
       version:
         description: "Build Version Label (e.g. v1.0, beta1, R1; leave empty for default)"
         required: false
         type: string
         default: ""
-
-      # ==================== 功能开关 ====================
       enable_susfs:
         description: "Enable SUSFS"
         required: true
@@ -22,12 +19,12 @@ on:
         type: boolean
         default: false
       zram_full_algo:
-        description: "Enable ZRAM Full Algorithm Support (lzo/lz4/lz4hc/lz4k/lz4kd/deflate/842/zstd, default lzo-rle)"
+        description: "Enable ZRAM Full Algorithm Support (lzo/lz4/lz4hc/lz4k/lz4kd/deflate/842/zstd)"
         required: false
         type: boolean
         default: false
       zram_extra_algos:
-        description: "Custom ZRAM Algorithms (comma-separated, e.g. lzo,lz4,deflate,zstd; only when full algo is off)"
+        description: "Custom ZRAM Algorithms (comma-separated)"
         required: false
         type: string
         default: ""
@@ -52,7 +49,7 @@ on:
         type: boolean
         default: true
       use_kpm:
-        description: "Enable KPM — NOT supported with Official KernelSU, keep disabled"
+        description: "Enable KPM — NOT supported with Official KernelSU"
         required: true
         type: boolean
         default: false
@@ -67,7 +64,7 @@ on:
         type: boolean
         default: false
       virtualization_support:
-        description: "Virtualization Support (6.1 only supports slot patches: off/678/123/345)"
+        description: "Virtualization Support (6.1: off/678/123/345)"
         required: false
         type: choice
         options:
@@ -82,7 +79,7 @@ on:
         type: boolean
         default: false
       custom_external_modules:
-        description: "Custom External Modules (supports repo;stage, module:repo;stage, set:repo#child;stage, separated by |)"
+        description: "Custom External Modules"
         required: false
         type: string
         default: ""
@@ -94,45 +91,36 @@ permissions:
 env:
   KERNEL_BRANCH: android-gs-shusky-6.1-android16
   KERNEL_ROOT: ${{ github.workspace }}/kernel
-  ANYKERNEL3: ${{ github.workspace }}/AnyKernel3
 
 jobs:
   build-pixel8pro-kernel:
     name: "Pixel 8 Pro (husky) | android-gs-shusky-6.1-android16${{ inputs.version && format(' | {0}', inputs.version) || '' }}"
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 120
 
     steps:
       # ============================================================
-      # 1. 构建信息摘要
+      # 1. Build info
       # ============================================================
       - name: 构建信息摘要
-        shell: bash
         run: |
-          set -euo pipefail
           echo "========================================"
-          echo "   Pixel 8 Pro (husky) 内核构建配置"
+          echo "   Pixel 8 Pro (husky) Kernel Builder"
           echo "========================================"
           echo "设备          : Pixel 8 Pro (husky)"
-          echo "内核分支      : ${{ env.KERNEL_BRANCH }}"
-          echo "GKI 版本      : android14-6.1 (Tensor G3)"
-          echo "KernelSU      : Official (Latest)"
+          echo "内核分支      : $KERNEL_BRANCH"
+          echo "GKI           : android14-6.1 (Tensor G3)"
+          echo "KernelSU      : Official"
           echo "SUSFS         : ${{ inputs.enable_susfs }}"
-          echo "ZRAM 增强     : ${{ inputs.use_zram }}"
-          echo "ZRAM 完整算法 : ${{ inputs.zram_full_algo }}"
-          echo "BBG 防砖      : ${{ inputs.use_bbg }}"
-          echo "DDK LSM       : ${{ inputs.use_ddk }}"
+          echo "ZRAM          : ${{ inputs.use_zram }}"
+          echo "BBG           : ${{ inputs.use_bbg }}"
+          echo "DDK           : ${{ inputs.use_ddk }}"
           echo "NTsync        : ${{ inputs.use_ntsync }}"
           echo "Networking    : ${{ inputs.use_networking }}"
-          echo "KPM           : ${{ inputs.use_kpm }}"
-          echo "Re-Kernel     : ${{ inputs.use_rekernel }}"
-          echo "虚拟化        : ${{ inputs.virtualization_support }}"
-          echo "自定义模块    : ${{ inputs.use_custom_external_modules }}"
-          echo "构建版本      : ${{ inputs.version || '默认' }}"
           echo "========================================"
 
       # ============================================================
-      # 2. 清理磁盘空间
+      # 2. Disk cleanup
       # ============================================================
       - name: 清理磁盘空间
         uses: endersonmenezes/free-disk-space@v3
@@ -150,69 +138,46 @@ jobs:
           testing: false
 
       # ============================================================
-      # 3. 检出仓库
+      # 3. Checkout
       # ============================================================
-      - name: 检出代码仓库
-        uses: actions/checkout@v6
+      - uses: actions/checkout@v6
 
       # ============================================================
-      # 4. 安装编译依赖
+      # 4. Install deps
       # ============================================================
       - name: 安装编译依赖
         run: |
-          apt_update_retry() {
-            for attempt in 1 2 3; do
-              if sudo apt-get update; then return 0; fi
-              echo "::warning::apt-get update 第 ${attempt} 次失败，重试中..."
-              sudo apt-get clean || true
-              sudo rm -rf /var/lib/apt/lists/*
-              sleep "$attempt"
-            done
-            echo "::error::apt-get update 连续失败"
-            return 1
-          }
-          apt_update_retry
-          sudo apt-get install -y ccache python3 git curl build-essential libssl-dev bison flex libelf-dev dwarves
+          for attempt in 1 2 3; do
+            if sudo apt-get update; then break; fi
+            sudo apt-get clean || true
+            sudo rm -rf /var/lib/apt/lists/*
+            sleep "$attempt"
+          done
+          sudo apt-get install -y ccache python3 git curl build-essential libssl-dev bison flex libelf-dev dwarves zip
 
       # ============================================================
-      # 5. 配置 ccache
+      # 5. ccache + Bazel cache
       # ============================================================
-      - name: 配置 ccache
+      - name: 配置缓存
         run: |
           mkdir -p ~/.cache/bazel
-          ccache --version
           ccache --max-size=2G
           ccache --set-config=compression=true
           echo "CCACHE_DIR=$HOME/.ccache" >> $GITHUB_ENV
 
-      - name: 恢复 ccache 缓存
-        uses: actions/cache@v5
-        with:
-          path: ~/.ccache
-          key: husky-kernel-ccache-${{ github.sha }}
-          restore-keys: |
-            husky-kernel-ccache-
-
       # ============================================================
-      # 6. 初始化构建环境
+      # 6. Setup repo tool
       # ============================================================
-      - name: 初始化构建环境
+      - name: 安装 repo 工具
         run: |
-          mkdir -p "$KERNEL_ROOT"
-          mkdir -p "$GITHUB_WORKSPACE/git-repo"
-          curl -L https://storage.googleapis.com/git-repo-downloads/repo -o "$GITHUB_WORKSPACE/git-repo/repo"
-          chmod 0755 "$GITHUB_WORKSPACE/git-repo/repo"
-          echo "$GITHUB_WORKSPACE/git-repo" >> "$GITHUB_PATH"
-          echo "REPO=$GITHUB_WORKSPACE/git-repo/repo" >> $GITHUB_ENV
-
-          cat >> $GITHUB_ENV << 'EOF'
-          SUSFS4KSU=$GITHUB_WORKSPACE/susfs4ksu
-          KERNEL_PATCHES=$GITHUB_WORKSPACE/kernel_patches
-          ANYKERNEL3=$GITHUB_WORKSPACE/AnyKernel3
-          EOF
+          mkdir -p "$GITHUB_WORKSPACE/.repo-bin"
+          curl -L https://storage.googleapis.com/git-repo-downloads/repo -o "$GITHUB_WORKSPACE/.repo-bin/repo"
+          chmod 0755 "$GITHUB_WORKSPACE/.repo-bin/repo"
+          echo "$GITHUB_WORKSPACE/.repo-bin" >> "$GITHUB_PATH"
+          echo "REPO=$GITHUB_WORKSPACE/.repo-bin/repo" >> $GITHUB_ENV
 
       # ============================================================
-      # 7. 配置 Git
+      # 7. Git config
       # ============================================================
       - name: 配置 Git
         run: |
@@ -220,179 +185,168 @@ jobs:
           git config --global user.email "BuildGkiKernel@gmail.com"
 
       # ============================================================
-      # 8. 克隆依赖仓库
+      # 8. Clone patch repos (SUSFS, kernel_patches)
       # ============================================================
-      - name: 克隆依赖仓库
+      - name: 克隆补丁仓库
         run: |
-          # AnyKernel3
-          echo "克隆 AnyKernel3..."
-          git clone https://github.com/WildKernels/AnyKernel3.git -b gki-2.0 --depth 1
-          rm -rf AnyKernel3/.git
-
-          # SUSFS (基于 GKI android14-6.1)
           if [ "${{ inputs.enable_susfs }}" == "true" ]; then
             echo "克隆 SUSFS (gki-android14-6.1)..."
-            retry_git_clone() {
-              local url="$1" branch="$2" dir="$3"
-              rm -rf "$dir"
-              for attempt in 1 2 3; do
-                if git clone "$url" -b "$branch" --depth 1 "$dir"; then return 0; fi
-                echo "::warning::git clone 失败: $url@$branch (attempt $attempt)"
-                rm -rf "$dir"
-                sleep "$attempt"
-              done
-              echo "::error::git clone 最终失败: $url@$branch"
-              return 1
-            }
-            retry_git_clone https://gitlab.com/simonpunk/susfs4ksu.git "gki-android14-6.1" susfs4ksu
-            SUSFS_DATE=$(git -C susfs4ksu log -1 --date=format:'%Y-%m-%d %H:%M:%S %z' --format='%cd')
-            echo "SUSFS_LATEST_COMMIT_DATE=$SUSFS_DATE" >> $GITHUB_ENV
-            echo "SUSFS 提交日期: $SUSFS_DATE"
-          else
-            echo "SUSFS 已禁用"
-            echo "SUSFS_LATEST_COMMIT_DATE=禁用" >> $GITHUB_ENV
+            for attempt in 1 2 3; do
+              if git clone https://gitlab.com/simonpunk/susfs4ksu.git -b gki-android14-6.1 --depth 1 susfs4ksu; then
+                break
+              fi
+              rm -rf susfs4ksu
+              sleep "$attempt"
+            done
           fi
-
-          # 补丁资源
-          echo "克隆补丁资源..."
-          git clone https://github.com/WildKernels/kernel_patches.git --depth 1
-          git clone https://github.com/Numbersf/Action-Build.git --depth=1
+          git clone https://github.com/WildKernels/kernel_patches.git --depth 1 || true
+          echo "SUSFS4KSU=$GITHUB_WORKSPACE/susfs4ksu" >> $GITHUB_ENV
+          echo "KERNEL_PATCHES=$GITHUB_WORKSPACE/kernel_patches" >> $GITHUB_ENV
 
       # ============================================================
-      # 9. 初始化并同步 Pixel 8 Pro 内核源码
+      # 9. Repo init + sync kernel manifest
       # ============================================================
-      - name: 同步内核源码
+      - name: 同步内核 manifest
         working-directory: ${{ env.KERNEL_ROOT }}
         run: |
-          echo "初始化 repo，分支: ${{ env.KERNEL_BRANCH }}"
-          $REPO init --depth=1 \
-            -u https://android.googlesource.com/kernel/manifest \
-            -b ${{ env.KERNEL_BRANCH }} \
-            --repo-rev=v2.16
-
-          $REPO --trace sync -c -j$(nproc --all) --no-tags --fail-fast
-          echo "REMOTE_BRANCH=${{ env.KERNEL_BRANCH }}" >> $GITHUB_ENV
-
-          # 列出顶层目录结构以便调试
-          echo "repo sync 完成，顶层目录:"
+          mkdir -p "$KERNEL_ROOT"
+          echo "repo init -b $KERNEL_BRANCH"
+          $REPO init -u https://android.googlesource.com/kernel/manifest \
+            -b "$KERNEL_BRANCH" --repo-rev=v2.16
+          $REPO sync -c -j$(nproc --all) --no-tags --fail-fast
+          echo "=== repo sync done ==="
+          echo "顶层目录:"
           ls -la
+          echo ""
+          echo "=== 搜索内核 Makefile ==="
+          find . -maxdepth 3 -name "Makefile" 2>/dev/null | head -20 || echo "(none found)"
 
       # ============================================================
-      # 10. 探测内核源码目录 & 版本信息
+      # 10. First build (stock) — fetches kernel source via Bazel
       # ============================================================
-      - name: 探测内核源码目录
+      - name: 首次构建 (stock kernel)
+        working-directory: ${{ env.KERNEL_ROOT }}
+        timeout-minutes: 50
+        run: |
+          set -e
+          echo "=== 首次构建: stock Pixel 8 Pro kernel ==="
+
+          # Run Kleaf build — this downloads kernel source & builds
+          BUILD_AOSP_KERNEL=1 bash build_shusky.sh 2>&1 | tail -100
+
+          echo "=== 首次构建完成 ==="
+          echo ""
+          echo "=== out/shusky/dist/ 内容 ==="
+          ls -la out/shusky/dist/ 2>/dev/null || echo "(out/shusky/dist not found)"
+          echo ""
+          echo "=== 搜索内核源码 ==="
+          find . -maxdepth 4 -name "Makefile" 2>/dev/null | head -20
+          find . -maxdepth 3 -type d -name "drivers" 2>/dev/null | head -10
+
+      # ============================================================
+      # 11. Locate kernel source (after Bazel fetched it)
+      # ============================================================
+      - name: 定位内核源码目录
         working-directory: ${{ env.KERNEL_ROOT }}
         run: |
           set -euo pipefail
+          echo "=== 搜索 drivers/ + Makefile ==="
 
-          # 按优先级查找内核源码目录（必须包含 drivers/ 子目录）
-          for candidate in \
-            "common" \
-            "." \
-            "kernel" \
-            "out"; do
-            if [ -d "$candidate/drivers" ] && [ -f "$candidate/Makefile" ]; then
-              KERNEL_SRC="$(realpath "$candidate")"
-              echo "内核源码目录: $KERNEL_SRC"
-              echo "KERNEL_SRC=$KERNEL_SRC" >> $GITHUB_ENV
+          # Search broadly — Bazel workspace can put source in various places
+          KERNEL_SRC=""
+          for candidate in $(find . -maxdepth 5 -type d -name "drivers" 2>/dev/null); do
+            candidate_dir="$(dirname "$candidate")"
+            if [ -f "$candidate_dir/Makefile" ]; then
+              KERNEL_SRC="$(realpath "$candidate_dir")"
+              echo ">>> 找到内核源码: $KERNEL_SRC"
               break
             fi
           done
 
-          if [ -z "${KERNEL_SRC:-}" ]; then
+          if [ -z "$KERNEL_SRC" ]; then
             echo "::error::找不到内核源码目录 (drivers/ + Makefile)"
-            echo "目录结构:"
-            find . -maxdepth 3 -type d | head -50
+            echo "完整目录树 (maxdepth 4):"
+            find . -maxdepth 4 -type d 2>/dev/null | sort | head -80
             exit 1
           fi
 
-          # 提取内核版本
+          echo "KERNEL_SRC=$KERNEL_SRC" >> $GITHUB_ENV
+          echo "DEFCONFIG=$KERNEL_SRC/arch/arm64/configs/gki_defconfig" >> $GITHUB_ENV
+
           KVER=$(grep '^VERSION = ' "$KERNEL_SRC/Makefile" | awk '{print $3}')
           KPATCH=$(grep '^PATCHLEVEL = ' "$KERNEL_SRC/Makefile" | awk '{print $3}')
           KSUB=$(grep '^SUBLEVEL = ' "$KERNEL_SRC/Makefile" | awk '{print $3}')
           echo "KERNEL_VERSION=${KVER}.${KPATCH}.${KSUB}" >> $GITHUB_ENV
-          echo "ACTUAL_SUBLEVEL=${KSUB:-0}" >> $GITHUB_ENV
           echo "内核版本: ${KVER}.${KPATCH}.${KSUB}"
-          echo "DEFCONFIG=$KERNEL_SRC/arch/arm64/configs/gki_defconfig" >> $GITHUB_ENV
 
       # ============================================================
-      # 11. 添加 KernelSU Official
+      # 12. Apply KernelSU Official
       # ============================================================
       - name: 添加 KernelSU Official
         working-directory: ${{ env.KERNEL_SRC }}
         run: |
-          echo "添加 KernelSU Official..."
-          echo "当前目录: $(pwd)"
-          echo "drivers/ 存在: $([ -d drivers ] && echo yes || echo no)"
-          BRANCH="${{ env.KERNEL_BRANCH }}"
-          curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s "$BRANCH"
+          echo "=== 添加 KernelSU Official ==="
+          echo "工作目录: $(pwd)"
+          echo "drivers/ 存在: $([ -d drivers ] && echo YES || echo NO)"
+          echo "Makefile 存在: $([ -f Makefile ] && echo YES || echo NO)"
+
+          curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s "$KERNEL_BRANCH"
 
           cd KernelSU
           KSU_GIT_VERSION=$(git rev-list --count HEAD)
           KSU_VERSION=$((30000 + KSU_GIT_VERSION))
           echo "KSU_VERSION=$KSU_VERSION" >> $GITHUB_ENV
-
-          # 更新 Kbuild 版本号
           if [ -f "kernel/Kbuild" ]; then
             sed -i "s/DKSU_VERSION=16/DKSU_VERSION=${KSU_VERSION}/" kernel/Kbuild
           fi
           cd ..
-
-          KSU_DATE=$(git -C KernelSU log -1 --date=format:'%Y-%m-%d %H:%M:%S %z' --format='%cd')
-          echo "KSU_LATEST_COMMIT_DATE=$KSU_DATE" >> $GITHUB_ENV
           echo "KernelSU 版本: $KSU_VERSION"
 
       # ============================================================
-      # 12. 应用 SUSFS 补丁
+      # 13. Apply SUSFS
       # ============================================================
       - name: 应用 SUSFS 补丁
         if: inputs.enable_susfs
-        working-directory: ${{ env.KERNEL_ROOT }}
+        working-directory: ${{ env.KERNEL_SRC }}
         run: |
-          echo "应用 SUSFS 补丁到 android14-6.1..."
+          echo "=== 应用 SUSFS 补丁 ==="
 
-          # 复制 SUSFS 文件
-          cp $SUSFS4KSU/kernel_patches/50_add_susfs_in_gki-android14-6.1.patch "$KERNEL_SRC/"
-          cp $SUSFS4KSU/kernel_patches/fs/* "$KERNEL_SRC/fs/" 2>/dev/null || true
-          cp $SUSFS4KSU/kernel_patches/include/linux/* "$KERNEL_SRC/include/linux/" 2>/dev/null || true
+          # Copy SUSFS source files
+          cp "$SUSFS4KSU/kernel_patches/50_add_susfs_in_gki-android14-6.1.patch" ./
+          cp "$SUSFS4KSU"/kernel_patches/fs/* ./fs/ 2>/dev/null || true
+          cp "$SUSFS4KSU"/kernel_patches/include/linux/* ./include/linux/ 2>/dev/null || true
 
-          # 应用 KernelSU SUSFS 补丁
-          cd "$KERNEL_SRC/KernelSU"
-          cp $SUSFS4KSU/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch ./
-          if grep -q '^diff --git a/kernel/Makefile b/kernel/Makefile' ./10_enable_susfs_for_ksu.patch \
-            && ! grep -q '^diff --git a/kernel/Kbuild b/kernel/Kbuild' ./10_enable_susfs_for_ksu.patch; then
-            sed -i 's|kernel/Makefile|kernel/Kbuild|g' ./10_enable_susfs_for_ksu.patch
+          # Apply KernelSU SUSFS hook
+          if [ -d KernelSU ]; then
+            cd KernelSU
+            cp "$SUSFS4KSU/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch" ./
+            if grep -q 'diff --git a/kernel/Makefile' 10_enable_susfs_for_ksu.patch \
+              && ! grep -q 'diff --git a/kernel/Kbuild' 10_enable_susfs_for_ksu.patch; then
+              sed -i 's|kernel/Makefile|kernel/Kbuild|g' 10_enable_susfs_for_ksu.patch
+            fi
+            patch -p1 --forward < 10_enable_susfs_for_ksu.patch || true
+            cd ..
           fi
-          patch -p1 --forward < 10_enable_susfs_for_ksu.patch || true
-          cd ..
 
-          # 应用 GKI SUSFS 补丁（当前已在 common/ 目录）
+          # Apply GKI SUSFS patch
           patch -p1 < 50_add_susfs_in_gki-android14-6.1.patch || true
 
-          # 修复 task_mmu.c 兼容性
+          # Fix task_mmu.c
           if [ -f "./fs/proc/task_mmu.c" ]; then
-            if grep -qF 'goto show_pad;' "./fs/proc/task_mmu.c"; then
-              sed -i -e 's/goto show_pad;/return 0;/' "./fs/proc/task_mmu.c"
-              echo "已修复 task_mmu.c goto show_pad"
-            fi
-            if grep -q '^[[:space:]]*show_pad:[[:space:]]*$' "./fs/proc/task_mmu.c" \
-              && ! grep -qF 'goto show_pad;' "./fs/proc/task_mmu.c"; then
-              sed -i '/^[[:space:]]*show_pad:[[:space:]]*$/d' "./fs/proc/task_mmu.c"
-              echo "已移除 task_mmu.c 无引用 show_pad 标签"
+            sed -i -e 's/goto show_pad;/return 0;/' ./fs/proc/task_mmu.c 2>/dev/null || true
+            if ! grep -qF 'goto show_pad;' ./fs/proc/task_mmu.c; then
+              sed -i '/^[[:space:]]*show_pad:[[:space:]]*$/d' ./fs/proc/task_mmu.c 2>/dev/null || true
             fi
           fi
-          cd ..
-
-          echo "SUSFS 补丁应用完成"
+          echo "SUSFS 补丁完成"
 
       # ============================================================
-      # 13. 配置 SUSFS defconfig
+      # 14. SUSFS defconfig
       # ============================================================
       - name: 配置 SUSFS defconfig
         if: inputs.enable_susfs
         run: |
-          DEFCONFIG="$KERNEL_SRC/arch/arm64/configs/gki_defconfig"
-          cat >> "$DEFCONFIG" << 'EOF'
+          cat >> "$KERNEL_SRC/arch/arm64/configs/gki_defconfig" << 'EOF'
           CONFIG_KSU_SUSFS=y
           CONFIG_KSU_SUSFS_SUS_PATH=y
           CONFIG_KSU_SUSFS_SUS_MOUNT=y
@@ -404,332 +358,180 @@ jobs:
           CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
           CONFIG_KSU_SUSFS_SUS_MAP=y
           EOF
-          echo "SUSFS defconfig 配置完成"
 
       # ============================================================
-      # 14. 应用 ZRAM 增强
+      # 15. ZRAM
       # ============================================================
       - name: 应用 ZRAM 补丁
         if: inputs.use_zram
         working-directory: ${{ env.KERNEL_SRC }}
         run: |
-          echo "应用 ZRAM 增强补丁..."
-          ZRAM_PATCHES="$KERNEL_PATCHES/wild/zram"
-
-          apply_zram_patch() {
-            local patch_file="$1"
-            if [ -f "$patch_file" ]; then
-              patch -p1 --forward < "$patch_file" || echo "::warning::ZRAM 补丁跳过: $(basename $patch_file)"
-            fi
-          }
-
-          # 基础 ZRAM 增强
-          apply_zram_patch "$ZRAM_PATCHES/zram_enhance.patch"
-
-          # 完整算法支持
-          if [ "${{ inputs.zram_full_algo }}" == "true" ]; then
-            echo "启用 ZRAM 完整算法..."
-            apply_zram_patch "$ZRAM_PATCHES/zram_full_algo.patch"
-          fi
-
-          # 额外自定义算法
+          ZRAM="$KERNEL_PATCHES/wild/zram"
+          apply() { [ -f "$1" ] && patch -p1 --forward < "$1" || true; }
+          apply "$ZRAM/zram_enhance.patch"
+          [ "${{ inputs.zram_full_algo }}" == "true" ] && apply "$ZRAM/zram_full_algo.patch"
           if [ -n "${{ inputs.zram_extra_algos }}" ]; then
-            echo "添加 ZRAM 额外算法: ${{ inputs.zram_extra_algos }}"
             IFS=',' read -r -a ALGOS <<< "${{ inputs.zram_extra_algos }}"
             for algo in "${ALGOS[@]}"; do
               algo=$(echo "$algo" | xargs)
-              [ -z "$algo" ] && continue
-              apply_zram_patch "$ZRAM_PATCHES/zram_${algo}.patch"
+              [ -n "$algo" ] && apply "$ZRAM/zram_${algo}.patch"
             done
           fi
-
-          echo "ZRAM 补丁应用完成"
+          echo "ZRAM done"
 
       # ============================================================
-      # 15. 应用 BBG 防砖补丁
+      # 16. BBG
       # ============================================================
       - name: 应用 BBG 补丁
         if: inputs.use_bbg
         working-directory: ${{ env.KERNEL_SRC }}
         run: |
-          echo "应用 BBG 防砖补丁..."
-          BBG_PATCH="$KERNEL_PATCHES/wild/bbg/bbg.patch"
-          if [ -f "$BBG_PATCH" ]; then
-            patch -p1 --forward < "$BBG_PATCH" || echo "::warning::BBG 补丁已应用或跳过"
-          fi
-
-          DEFCONFIG="arch/arm64/configs/gki_defconfig"
-          if ! grep -q "CONFIG_BBG=y" "$DEFCONFIG"; then
-            echo "CONFIG_BBG=y" >> "$DEFCONFIG"
-          fi
-          echo "BBG 补丁应用完成"
+          BBG="$KERNEL_PATCHES/wild/bbg/bbg.patch"
+          [ -f "$BBG" ] && patch -p1 --forward < "$BBG" || true
+          grep -q "CONFIG_BBG=y" arch/arm64/configs/gki_defconfig || echo "CONFIG_BBG=y" >> arch/arm64/configs/gki_defconfig
+          echo "BBG done"
 
       # ============================================================
-      # 16. 应用 DDK LSM
+      # 17. DDK
       # ============================================================
       - name: 应用 DDK LSM
         if: inputs.use_ddk
         working-directory: ${{ env.KERNEL_SRC }}
         run: |
-          echo "应用 DDK LSM..."
-          DDK_PATCH="$KERNEL_PATCHES/wild/ddk/ddk.patch"
-          if [ -f "$DDK_PATCH" ]; then
-            patch -p1 --forward < "$DDK_PATCH" || echo "::warning::DDK 补丁已应用或跳过"
-          fi
-          echo "DDK LSM 应用完成"
+          DDK="$KERNEL_PATCHES/wild/ddk/ddk.patch"
+          [ -f "$DDK" ] && patch -p1 --forward < "$DDK" || true
+          echo "DDK done"
 
       # ============================================================
-      # 17. 应用 NTsync
+      # 18. NTsync
       # ============================================================
       - name: 应用 NTsync
         if: inputs.use_ntsync
         working-directory: ${{ env.KERNEL_SRC }}
         run: |
-          echo "应用 NTsync..."
-          NTSYNC_PATCH="$KERNEL_PATCHES/wild/ntsync/ntsync.patch"
-          if [ -f "$NTSYNC_PATCH" ]; then
-            patch -p1 --forward < "$NTSYNC_PATCH" || echo "::warning::NTsync 补丁已应用或跳过"
-          fi
-
-          DEFCONFIG="arch/arm64/configs/gki_defconfig"
-          if ! grep -q "CONFIG_NTSYNC=y" "$DEFCONFIG"; then
-            echo "CONFIG_NTSYNC=y" >> "$DEFCONFIG"
-          fi
-          echo "NTsync 应用完成"
+          NTSYNC="$KERNEL_PATCHES/wild/ntsync/ntsync.patch"
+          [ -f "$NTSYNC" ] && patch -p1 --forward < "$NTSYNC" || true
+          grep -q "CONFIG_NTSYNC=y" arch/arm64/configs/gki_defconfig || echo "CONFIG_NTSYNC=y" >> arch/arm64/configs/gki_defconfig
+          echo "NTsync done"
 
       # ============================================================
-      # 18. 应用 Networking 增强
+      # 19. Networking
       # ============================================================
       - name: 应用 Networking 增强
         if: inputs.use_networking
         working-directory: ${{ env.KERNEL_SRC }}
         run: |
-          echo "应用 Networking 增强 (IPSet + BBR)..."
-          IPSET_PATCH="$KERNEL_PATCHES/wild/networking/ipset.patch"
-          BBR_PATCH="$KERNEL_PATCHES/wild/networking/bbr.patch"
-
-          [ -f "$IPSET_PATCH" ] && patch -p1 --forward < "$IPSET_PATCH" || true
-          [ -f "$BBR_PATCH" ] && patch -p1 --forward < "$BBR_PATCH" || true
-
-          DEFCONFIG="arch/arm64/configs/gki_defconfig"
-          ensure_defconfig() {
-            if ! grep -q "$1" "$2"; then echo "$1" >> "$2"; fi
-          }
-          ensure_defconfig "CONFIG_TCP_CONG_ADVANCED=y" "$DEFCONFIG"
-          ensure_defconfig "CONFIG_TCP_CONG_BBR=y" "$DEFCONFIG"
-          ensure_defconfig "CONFIG_DEFAULT_BBR=y" "$DEFCONFIG"
-          ensure_defconfig 'CONFIG_DEFAULT_TCP_CONG="bbr"' "$DEFCONFIG"
-          ensure_defconfig "CONFIG_NET_SCH_FQ=y" "$DEFCONFIG"
-          echo "Networking 增强应用完成"
+          IPSET="$KERNEL_PATCHES/wild/networking/ipset.patch"
+          BBR="$KERNEL_PATCHES/wild/networking/bbr.patch"
+          [ -f "$IPSET" ] && patch -p1 --forward < "$IPSET" || true
+          [ -f "$BBR" ] && patch -p1 --forward < "$BBR" || true
+          D=arch/arm64/configs/gki_defconfig
+          for cfg in "CONFIG_TCP_CONG_ADVANCED=y" "CONFIG_TCP_CONG_BBR=y" "CONFIG_DEFAULT_BBR=y" 'CONFIG_DEFAULT_TCP_CONG="bbr"' "CONFIG_NET_SCH_FQ=y"; do
+            grep -qF "$cfg" "$D" || echo "$cfg" >> "$D"
+          done
+          echo "Networking done"
 
       # ============================================================
-      # 19. 应用 KPM
+      # 20. KPM
       # ============================================================
       - name: 应用 KPM
         if: inputs.use_kpm
-        working-directory: ${{ env.KERNEL_SRC }}
         run: |
-          echo "::warning::KPM 不支持 Official KernelSU，已跳过"
-          echo "如需 KPM，请使用 SukiSU 或 ReSukiSU 变体"
+          echo "::error::KPM not supported with Official KernelSU"
           exit 1
 
       # ============================================================
-      # 20. 应用虚拟化支持
+      # 21. Virtualization
       # ============================================================
       - name: 应用虚拟化补丁
         if: inputs.virtualization_support != 'off'
         working-directory: ${{ env.KERNEL_SRC }}
         run: |
-          echo "应用虚拟化 slot patches: ${{ inputs.virtualization_support }}"
-          VIRT_PATCH="$KERNEL_PATCHES/wild/virtualization/slot_${{ inputs.virtualization_support }}.patch"
-          if [ -f "$VIRT_PATCH" ]; then
-            patch -p1 --forward < "$VIRT_PATCH" || echo "::warning::虚拟化补丁已应用或跳过"
-          else
-            echo "::warning::未找到虚拟化补丁: $VIRT_PATCH"
-          fi
+          V="$KERNEL_PATCHES/wild/virtualization/slot_${{ inputs.virtualization_support }}.patch"
+          [ -f "$V" ] && patch -p1 --forward < "$V" || echo "::warning::patch not found: $V"
 
       # ============================================================
-      # 21. 配置内核名称
+      # 22. Configure kernel name
       # ============================================================
       - name: 配置内核名称
-        working-directory: ${{ env.KERNEL_ROOT }}
         run: |
-          # 移除 protected_exports_list 避免 Kleaf trim 失败
-          sed -i '/^[[:space:]]*"protected_exports_list"[[:space:]]*:/d' "$KERNEL_SRC/BUILD.bazel" 2>/dev/null || true
+          D="$KERNEL_SRC/arch/arm64/configs/gki_defconfig"
+          # Strip protected exports for Kleaf
+          sed -i '/"protected_exports_list"/d' "$KERNEL_SRC/BUILD.bazel" 2>/dev/null || true
           sed -i '/kmi_symbol_list_strict_mode/d' "$KERNEL_SRC/BUILD.bazel" 2>/dev/null || true
-          rm -rf "$KERNEL_SRC/android/abi_gki_protected_exports_"* 2>/dev/null || true
-          sed -i "/stable_scmversion_cmd/s/-maybe-dirty//g" ./build/kernel/kleaf/impl/stamp.bzl 2>/dev/null || true
+          rm -rf "$KERNEL_SRC"/android/abi_gki_protected_exports_* 2>/dev/null || true
+          sed -i "/stable_scmversion_cmd/s/-maybe-dirty//g" "$KERNEL_ROOT/build/kernel/kleaf/impl/stamp.bzl" 2>/dev/null || true
 
-          VERSION_INPUT=$(echo "${{ inputs.version }}" | tr -d '[:space:]')
-          if [ -n "$VERSION_INPUT" ]; then
-            CLEAN_VERSION=$(echo "$VERSION_INPUT" | sed -E 's/^[0-9]+\.[0-9]+\.[0-9]+//')
-            sed -i '/^CONFIG_LOCALVERSION=/ s/="\([^"]*\)"/="'"$CLEAN_VERSION"'"/' "$KERNEL_SRC/arch/arm64/configs/gki_defconfig" 2>/dev/null || true
-            echo "自定义版本: $CLEAN_VERSION"
+          V_INPUT=$(echo "${{ inputs.version }}" | tr -d '[:space:]')
+          if [ -n "$V_INPUT" ]; then
+            CLEAN=$(echo "$V_INPUT" | sed -E 's/^[0-9]+\.[0-9]+\.[0-9]+//')
+            sed -i '/^CONFIG_LOCALVERSION=/ s/="\([^"]*\)"/="'"$CLEAN"'"/' "$D" 2>/dev/null || true
+            echo "Version: $CLEAN"
           else
             cd "$KERNEL_SRC"
             BID="ab$((RANDOM % 90000000 + 10000000))"
-            GHASH=$(git rev-parse --verify HEAD | cut -c1-13)
-            KMI_LOCAL="-android14-11-g${GHASH}-${BID}-4k"
-            sed -i "/^CONFIG_LOCALVERSION=/ s/=\"[^\"]*\"/=\"${KMI_LOCAL}\"/" ./arch/arm64/configs/gki_defconfig 2>/dev/null || true
-            echo "自动版本: $KMI_LOCAL"
-            cd "$KERNEL_ROOT"
+            GHASH=$(git rev-parse --verify HEAD 2>/dev/null | cut -c1-13 || echo "unknown")
+            KMI="-android14-11-g${GHASH}-${BID}-4k"
+            sed -i "/^CONFIG_LOCALVERSION=/ s/=\"[^\"]*\"/=\"${KMI}\"/" "$D" 2>/dev/null || true
+            echo "Version: $KMI"
           fi
 
       # ============================================================
-      # 22. 编译内核 — Kleaf (Bazel)
+      # 23. Second build (with patches)
       # ============================================================
-      - name: 编译内核 (Kleaf)
-        uses: nick-fields/retry@v4
-        with:
-          timeout_minutes: 40
-          max_attempts: 2
-          retry_on: timeout
-          command: |
-            echo "KernelSU 版本: $KSU_VERSION"
-            echo "KernelSU 提交日期: $KSU_LATEST_COMMIT_DATE"
-            echo "SUSFS 提交日期: $SUSFS_LATEST_COMMIT_DATE"
-            set -ex
-            cd "$KERNEL_ROOT"
-
-            # Pixel 8 Pro 使用 build_shusky.sh 构建
-            # BUILD_AOSP_KERNEL=1 强制本地编译内核（不使用预编译 GKI）
-            BUILD_AOSP_KERNEL=1 bash build_shusky.sh
-
-            echo "Kleaf 编译完成"
-            ls -la out/shusky/dist/ || echo "检查输出目录..."
-            find out/ -name "Image*" -o -name "*.lz4" 2>/dev/null | head -20 || true
+      - name: 二次构建 (with KernelSU + patches)
+        working-directory: ${{ env.KERNEL_ROOT }}
+        timeout-minutes: 50
+        run: |
+          echo "=== 二次构建: Pixel 8 Pro + KernelSU ==="
+          BUILD_AOSP_KERNEL=1 bash build_shusky.sh 2>&1 | tail -100
+          echo "=== 构建完成 ==="
+          echo ""
+          echo "=== out/shusky/dist/ ==="
+          ls -la out/shusky/dist/ 2>/dev/null || echo "(not found)"
+          echo ""
+          echo "=== 所有 boot*.img/dtbo*.img/vendor_* ==="
+          find out/ -maxdepth 4 \( -name "boot*.img" -o -name "dtbo*.img" -o -name "vendor_*.img" \) 2>/dev/null | sort
 
       # ============================================================
-      # 23. 提取编译产物
+      # 24. Collect images & package
       # ============================================================
-      - name: 提取编译产物
+      - name: 收集镜像并打包
         run: |
           set -ex
-          mkdir -p "$GITHUB_WORKSPACE/bootimgs"
-          cd "$KERNEL_ROOT"
+          DIST="$KERNEL_ROOT/out/shusky/dist"
+          OUT="$GITHUB_WORKSPACE/out"
+          mkdir -p "$OUT"
 
-          # Kleaf 输出位置
-          DIST_DIR="out/shusky/dist"
-          if [ ! -d "$DIST_DIR" ]; then
-            # 回退查找 bazel-bin
-            DIST_DIR="bazel-bin/common/kernel_aarch64"
-          fi
-
-          echo "查找 Image 文件..."
-          find . -name "Image" -o -name "Image.lz4" -o -name "boot.img" 2>/dev/null | head -20
-
-          # 复制 Image
-          if [ -f "$DIST_DIR/Image" ]; then
-            cp "$DIST_DIR/Image" "$GITHUB_WORKSPACE/bootimgs/"
-            cp "$DIST_DIR/Image" "$GITHUB_WORKSPACE/"
-            echo "Image 已复制"
-          fi
-
-          # 复制 Image.lz4
-          if [ -f "$DIST_DIR/Image.lz4" ]; then
-            cp "$DIST_DIR/Image.lz4" "$GITHUB_WORKSPACE/bootimgs/"
-            cp "$DIST_DIR/Image.lz4" "$GITHUB_WORKSPACE/"
-            echo "Image.lz4 已复制"
-          fi
-
-          # 如果 build_shusky.sh 生成了 boot.img
-          if [ -f "$DIST_DIR/boot.img" ]; then
-            cp "$DIST_DIR/boot.img" "$GITHUB_WORKSPACE/bootimgs/"
-            echo "boot.img (Kleaf) 已复制"
-          fi
-
-          cd "$GITHUB_WORKSPACE"
-          if [ -f "Image" ]; then
-            gzip -n -k -f -9 ./Image > ./Image.gz
-            echo "Image.gz 已生成"
-          fi
-
-          ls -la "$GITHUB_WORKSPACE/bootimgs/" 2>/dev/null || echo "bootimgs 目录为空"
-          ls -la Image* 2>/dev/null || echo "当前目录无 Image 文件"
-
-      # ============================================================
-      # 24. 构建 Boot 镜像
-      # ============================================================
-      - name: 构建 Boot 镜像
-        run: |
-          set -ex
-          cd "$GITHUB_WORKSPACE"
-          mkdir -p AnyKernel3
-
-          # 下载 mkbootimg 工具
-          if [ ! -f "mkbootimg/mkbootimg.py" ]; then
-            git clone https://android.googlesource.com/platform/system/tools/mkbootimg -b main-kernel-build-2024 --depth 1 mkbootimg 2>/dev/null || true
-          fi
-          MKBOOTIMG="python3 $GITHUB_WORKSPACE/mkbootimg/mkbootimg.py"
-
-          if [ -f "Image" ]; then
-            # 创建基础 ramdisk
-            mkdir -p out/ramdisk
-            echo "placeholder" > out/ramdisk/placeholder 2>/dev/null || true
-
-            # boot.img (uncompressed)
-            $MKBOOTIMG --header_version 4 --kernel Image --output boot.img --ramdisk out/ramdisk 2>/dev/null || \
-            $MKBOOTIMG --header_version 4 --kernel Image --output boot.img || true
-
-            if [ -f "boot.img" ]; then
-              cp boot.img "$GITHUB_WORKSPACE/bootimgs/"
-              echo "boot.img 创建成功"
+          # Collect required images
+          for img in boot.img dtbo.img vendor_kernel_boot.img; do
+            if [ -f "$DIST/$img" ]; then
+              cp "$DIST/$img" "$OUT/"
+              echo "OK: $img ($(du -h "$OUT/$img" | cut -f1))"
+            else
+              echo "MISSING: $img (searched $DIST)"
             fi
+          done
 
-            # boot-gz.img
-            if [ -f "Image.gz" ]; then
-              $MKBOOTIMG --header_version 4 --kernel Image.gz --output boot-gz.img --ramdisk out/ramdisk 2>/dev/null || true
-              [ -f "boot-gz.img" ] && cp boot-gz.img "$GITHUB_WORKSPACE/bootimgs/"
-            fi
+          # Also copy Image.lz4 if exists
+          [ -f "$DIST/Image.lz4" ] && cp "$DIST/Image.lz4" "$OUT/" && echo "OK: Image.lz4"
+          [ -f "$DIST/Image" ] && cp "$DIST/Image" "$OUT/" && echo "OK: Image"
 
-            # boot-lz4.img
-            if [ -f "Image.lz4" ]; then
-              $MKBOOTIMG --header_version 4 --kernel Image.lz4 --output boot-lz4.img --ramdisk out/ramdisk 2>/dev/null || true
-              [ -f "boot-lz4.img" ] && cp boot-lz4.img "$GITHUB_WORKSPACE/bootimgs/"
-            fi
-          fi
+          echo ""
+          echo "=== 产物清单 ==="
+          ls -la "$OUT/"
 
-          ls -la "$GITHUB_WORKSPACE/bootimgs/"
-
-      # ============================================================
-      # 25. 创建 AnyKernel3 压缩包
-      # ============================================================
-      - name: 创建 AnyKernel3 压缩包
-        if: always() && !cancelled()
-        run: |
-          set -ex
-          cd "$GITHUB_WORKSPACE"
-          mkdir -p AnyKernel3
-
-          # 下载 AnyKernel3 模板
-          if [ ! -f "AnyKernel3/anykernel.sh" ]; then
-            git clone https://github.com/WildKernels/AnyKernel3.git -b gki-2.0 --depth 1 AnyKernel3-tmpl 2>/dev/null || true
-            if [ -d "AnyKernel3-tmpl" ]; then
-              cp -r AnyKernel3-tmpl/* AnyKernel3/ 2>/dev/null || true
-              rm -rf AnyKernel3-tmpl
-            fi
-          fi
-
-          if [ -f "Image" ] || [ -f "Image.lz4" ]; then
-            [ -f "Image" ] && cp Image AnyKernel3/
-            [ -f "Image.lz4" ] && cp Image.lz4 AnyKernel3/
-
-            ZIP_NAME="husky-${{ env.KERNEL_BRANCH }}-KernelSU-Official"
-            [ -n "${{ inputs.version }}" ] && ZIP_NAME="${ZIP_NAME}-${{ inputs.version }}"
-            ZIP_NAME="${ZIP_NAME}.zip"
-
-            cd AnyKernel3
-            zip -r9 "../${ZIP_NAME}" . -x '.git/*' -x '.gitignore'
-            cd ..
-
-            echo "AnyKernel3 压缩包: $ZIP_NAME"
-            ls -la "$ZIP_NAME"
-          else
-            echo "无 Image 文件，跳过 AnyKernel3 打包"
-          fi
+          # Create flashable zip
+          ZIP="husky-kernel-${{ env.KERNEL_BRANCH }}"
+          [ -n "${{ inputs.version }}" ] && ZIP="${ZIP}-${{ inputs.version }}"
+          ZIP="${ZIP}.zip"
+          cd "$OUT"
+          zip -r9 "$GITHUB_WORKSPACE/$ZIP" .
+          echo "=== 打包完成: $ZIP ==="
+          ls -la "$GITHUB_WORKSPACE/$ZIP"
 
       # ============================================================
-      # 26. 上传构建产物
+      # 25. Upload
       # ============================================================
       - name: 上传构建产物
         uses: actions/upload-artifact@v6
@@ -737,14 +539,48 @@ jobs:
         with:
           name: husky-kernel-${{ env.KERNEL_BRANCH }}
           path: |
-            *.img
             *.zip
-            Image*
-            bootimgs/*
+            out/*
+          if-no-files-found: warn
+
+      # ============================================================
+      # 26. AnyKernel3 (optional, from Image.lz4)
+      # ============================================================
+      - name: 创建 AnyKernel3 包
+        if: always() && !cancelled()
+        run: |
+          set -ex
+          cd "$GITHUB_WORKSPACE"
+          if [ ! -f out/Image ] && [ ! -f out/Image.lz4 ]; then
+            echo "No Image file, skipping AnyKernel3"
+            exit 0
+          fi
+
+          git clone https://github.com/WildKernels/AnyKernel3.git -b gki-2.0 --depth 1 AnyKernel3 2>/dev/null || true
+          rm -rf AnyKernel3/.git
+          [ -f out/Image ] && cp out/Image AnyKernel3/
+          [ -f out/Image.lz4 ] && cp out/Image.lz4 AnyKernel3/
+
+          ZIP="husky-AnyKernel3-KSU-Official"
+          [ -n "${{ inputs.version }}" ] && ZIP="${ZIP}-${{ inputs.version }}"
+          ZIP="${ZIP}.zip"
+          cd AnyKernel3
+          zip -r9 "../$ZIP" . -x '.git/*'
+          cd ..
+          echo "AnyKernel3: $ZIP"
+          ls -la "$ZIP"
+
+      - name: 上传 AnyKernel3
+        uses: actions/upload-artifact@v6
+        if: always() && !cancelled()
+        with:
+          name: husky-anykernel3
+          path: |
+            *.zip
           if-no-files-found: warn
 
   # ============================================================
-  # 获取 KernelSU Manager APK
+  # KernelSU Manager APK
   # ============================================================
   get-ksu-manager:
     needs: build-pixel8pro-kernel
