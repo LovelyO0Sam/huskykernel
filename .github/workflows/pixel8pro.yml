@@ -5,18 +5,13 @@ on:
     inputs:
       # ==================== 内核版本配置 ====================
       # Pixel 8 Pro (husky) uses Tensor G3 with GKI kernel android14-6.1.
-      # Kernel branch: android-gs-shusky-6.1-android16
-      # Build from AOSP common kernel: common-android14-6.1-<patch_level>
-      sub_level:
-        description: "Sub Level (e.g. 129, 162, X for lts)"
-        required: true
+      # Google kernel branch: android-gs-shusky-6.1-android16
+      # Build from AOSP common kernel manifest.
+      version:
+        description: "Build Version Label (e.g. v1.0, beta1, R1; leave empty for default)"
+        required: false
         type: string
-        default: "X"
-      os_patch_level:
-        description: "Security Patch Level (e.g. 2025-05, 2026-03, lts)"
-        required: true
-        type: string
-        default: "lts"
+        default: ""
 
       # ==================== 功能开关 ====================
       enable_susfs:
@@ -28,7 +23,7 @@ on:
         description: "Enable ZRAM Enhanced Algorithms"
         required: true
         type: boolean
-        default: true
+        default: false
       zram_full_algo:
         description: "Enable ZRAM Full Algorithm Support (lzo/lz4/lz4hc/lz4k/lz4kd/deflate/842/zstd, default lzo-rle)"
         required: false
@@ -101,14 +96,15 @@ permissions:
 
 jobs:
   build-pixel8pro-kernel:
-    name: "Pixel 8 Pro (husky) | 6.1.${{ inputs.sub_level }} | android14 | ${{ inputs.os_patch_level }}"
+    name: "Pixel 8 Pro (husky) | android14-6.1${{ inputs.version && format(' | {0}', inputs.version) || '' }}"
     uses: ./.github/workflows/build.yml
     secrets: inherit
     with:
       android_version: "android14"
       kernel_version: "6.1"
-      sub_level: ${{ inputs.sub_level }}
-      os_patch_level: ${{ inputs.os_patch_level }}
+      sub_level: "X"
+      os_patch_level: "lts"
+      version: ${{ inputs.version }}
       ksu_variant: "Official"
       ksu_branch: "Latest(最新)"
       virtualization_support: ${{ inputs.virtualization_support }}

@@ -7,7 +7,7 @@
 ## 内核信息
 
 - **设备**: Pixel 8 Pro (husky)
-- **内核分支**: `android-gs-shusky-6.1-android16`
+- **Google 内核分支**: `android-gs-shusky-6.1-android16`
 - **GKI 版本**: android14-6.1 (Tensor G3)
 - **KernelSU 变体**: Official
 
@@ -17,8 +17,7 @@
 2. 进入 Actions 页面，选择 **Pixel 8 Pro (husky) Kernel Builder**
 3. 点击 "Run workflow" 手动触发
 4. 配置构建参数：
-   - **Sub Level**: 子版本号，X 代表 LTS 最新
-   - **Security Patch Level**: 安全补丁级别，lts 代表 LTS 最新
+   - **Version**: 构建版本标签（可选，如 v1.0、beta1、R1）
    - **功能开关**: SUSFS / ZRAM / BBG / DDK / NTsync / Networking / KPM 等按需启用
 5. 等待构建完成，下载构建产物
 
