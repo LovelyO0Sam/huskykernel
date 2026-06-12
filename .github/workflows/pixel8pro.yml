@@ -98,7 +98,7 @@ env:
 
 jobs:
   build-pixel8pro-kernel:
-    name: "Pixel 8 Pro (husky) | ${{ env.KERNEL_BRANCH }}${{ inputs.version && format(' | {0}', inputs.version) || '' }}"
+    name: "Pixel 8 Pro (husky) | android-gs-shusky-6.1-android16${{ inputs.version && format(' | {0}', inputs.version) || '' }}"
     runs-on: ubuntu-latest
     timeout-minutes: 90
 
