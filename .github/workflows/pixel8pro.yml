@@ -439,12 +439,44 @@ jobs:
           for cfg in "CONFIG_TCP_CONG_ADVANCED=y" "CONFIG_TCP_CONG_BBR=y" "CONFIG_DEFAULT_BBR=y" 'CONFIG_DEFAULT_TCP_CONG="bbr"' "CONFIG_NET_SCH_FQ=y"; do
             grep -qF "$cfg" "$D" || echo "$cfg" >> "$D"
           done
-          # Disable non-essential TCP congestion modules — they cause
-          # Kleaf module_outs errors since Pixel BUILD.bazel doesn't list them
+          # Disable non-essential TCP congestion modules in defconfig
           for cfg in "CONFIG_TCP_CONG_BIC" "CONFIG_TCP_CONG_HTCP" "CONFIG_TCP_CONG_WESTWOOD"; do
             sed -i "s/${cfg}=./${cfg}=n/" "$D" 2>/dev/null || echo "${cfg}=n" >> "$D"
           done
-          echo "Networking done (bic/htcp/westwood disabled for Kleaf compat)"
+          # Also fix Kleaf BUILD.bazel module_outs — insert missing TCP modules
+          BUILD_BAZEL="$KERNEL_ROOT/private/devices/google/shusky/BUILD.bazel"
+          if [ -f "$BUILD_BAZEL" ]; then
+            cat > /tmp/fix_modules.py << PYEOF
+import sys
+build = sys.argv[1]
+with open(build) as f:
+    lines = f.readlines()
+
+# find module_outs section and its closing bracket
+in_ms = False
+ins = None
+for i, line in enumerate(lines):
+    if 'module_outs' in line:
+        in_ms = True
+    if in_ms and line.strip().startswith(']'):
+        ins = i
+        break
+
+new = ['net/ipv4/tcp_bic.ko', 'net/ipv4/tcp_htcp.ko', 'net/ipv4/tcp_westwood.ko']
+prefix = line[:len(line) - len(line.lstrip())]  # match indent
+missing = [m for m in new if m not in ''.join(lines)]
+if missing and ins:
+    for m in reversed(missing):
+        lines.insert(ins, f'{prefix}"{m}",\n')
+    with open(build, 'w') as f:
+        f.writelines(lines)
+    print(f'Added to module_outs: {missing}')
+else:
+    print('module_outs already ok or section not found')
+PYEOF
+            python3 /tmp/fix_modules.py "$BUILD_BAZEL"
+          fi
+          echo "Networking done (bic/htcp/westwood disabled + BUILD.bazel patched)"
 
       # ============================================================
       # 20. KPM
